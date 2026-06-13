@@ -1,0 +1,43 @@
+name: BTC Paper Trading
+
+on:
+  schedule:
+    # 毎日UTC9:00(日本時間18:00)に実行
+    - cron: '0 9 * * *'
+  # 手動実行もできるようにする
+  workflow_dispatch:
+
+jobs:
+  run-paper-trade:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # 1. リポジトリのコードを取得
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Pythonの環境をセットアップ
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. 必要なライブラリをインストール
+      - name: Install dependencies
+        run: pip install yfinance pandas
+
+      # 4. ペーパートレードを実行
+      - name: Run paper trade
+        run: python paper_trade.py
+
+      # 5. CSVの変更をリポジトリに保存
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add btc_sma_log.csv
+          git diff --staged --quiet || git commit -m "Update paper trade log $(date -u '+%Y-%m-%d')"
+          git push
