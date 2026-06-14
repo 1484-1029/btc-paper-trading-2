@@ -8,6 +8,10 @@ on:
 jobs:
   trade:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,11 +22,18 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install yfinance pandas numpy lightgbm scikit-learn requests
-          
+        run: pip install yfinance pandas numpy lightgbm scikit-learn requests
+
       - name: Run auto trade
         env:
           BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
           BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
         run: python auto_trade.py
+
+      - name: Save position
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add position.json
+          git diff --staged --quiet || git commit -m "Update position $(date -u '+%Y-%m-%d')"
+          git push
