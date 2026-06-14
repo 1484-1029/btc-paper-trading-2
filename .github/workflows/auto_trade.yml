@@ -1,0 +1,28 @@
+name: BTC Auto Trade
+
+on:
+  schedule:
+    # 毎日UTC9時(日本時間18時)に実行
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy lightgbm scikit-learn pandas-ta requests
+
+      - name: Run auto trade
+        env:
+          BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
+          BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
+        run: python auto_trade.py
