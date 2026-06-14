@@ -28,6 +28,8 @@ jobs:
         env:
           BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
           BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python auto_trade.py
 
       - name: Save position
