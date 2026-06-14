@@ -2,9 +2,8 @@ name: BTC Auto Trade
 
 on:
   schedule:
-    # 毎日UTC9時(日本時間18時)に実行
     - cron: '0 9 * * *'
-  workflow_dispatch:  # 手動実行も可能
+  workflow_dispatch:
 
 jobs:
   trade:
@@ -19,7 +18,6 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        - name: Install dependencies
         run: |
           pip install yfinance pandas numpy lightgbm scikit-learn requests
           pip install pandas-ta --no-build-isolation || pip install git+https://github.com/twopirllc/pandas-ta.git@development
