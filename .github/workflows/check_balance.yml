@@ -1,0 +1,25 @@
+name: Check Balance
+
+on:
+  workflow_dispatch:  # 手動実行のみ
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check balance
+        env:
+          BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
+          BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
+        run: python check_balance.py
