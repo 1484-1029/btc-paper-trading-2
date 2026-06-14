@@ -103,6 +103,7 @@ def place_order(side, btc_amount):
         'amount': str(round(btc_amount, 4)),
         'side': side,
         'type': 'market',
+        'post_only': False
     })
     r = requests.post(
         'https://api.bitbank.cc' + path,
@@ -110,7 +111,7 @@ def place_order(side, btc_amount):
         data=body
     )
     return r.json()
-
+    
 # ===================================================
 # LightGBMによるシグナル生成
 # ===================================================
@@ -218,18 +219,15 @@ MIN_ORDER_JPY = 1000
 if proba >= 0.5:
     if jpy_balance >= MIN_ORDER_JPY:
         order_jpy = jpy_balance * 0.5
-        btc_amount = order_jpy / btc_price
-        print(f"買いシグナル: {order_jpy:,.0f}円分({btc_amount:.6f}BTC)を購入")
-        result = place_order('buy', btc_amount)
-        print(f"注文結果: {result}")
+        btc_amount = round(order_jpy / btc_price, 4)
+        # 最小注文数量チェック
+        if btc_amount >= 0.0001:
+            print(f"買いシグナル: {order_jpy:,.0f}円分({btc_amount:.6f}BTC)を購入")
+            result = place_order('buy', btc_amount)
+            print(f"注文結果: {result}")
+        else:
+            print(f"注文数量が最小値未満({btc_amount:.6f}BTC < 0.0001BTC)")
     else:
         print(f"買いシグナルだが残高不足({jpy_balance:.0f}円)")
-else:
-    if btc_balance * btc_price >= MIN_ORDER_JPY:
-        print(f"売りシグナル: BTC全量({btc_balance:.6f}BTC)を売却")
-        result = place_order('sell', btc_balance)
-        print(f"注文結果: {result}")
-    else:
-        print(f"売りシグナルだがBTC残高なし")
 
 print("完了")
