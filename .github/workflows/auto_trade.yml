@@ -19,7 +19,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install yfinance pandas numpy lightgbm scikit-learn pandas-ta requests
+        - name: Install dependencies
+        run: |
+          pip install yfinance pandas numpy lightgbm scikit-learn requests
+          pip install pandas-ta --no-build-isolation || pip install git+https://github.com/twopirllc/pandas-ta.git@development
 
       - name: Run auto trade
         env:
