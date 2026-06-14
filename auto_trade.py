@@ -1,6 +1,6 @@
 # ===================================================
 # BTC自動売買スクリプト(bitbank) 改善版
-# ポジション管理・損切りロジック追加
+# ポジション管理・損切り・Gmail通知追加
 # ===================================================
 import os
 import time
@@ -17,38 +17,38 @@ import warnings
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+warnings.filterwarnings('ignore')
 
-GMAIL_ADDRESS     = os.environ.get('GMAIL_ADDRESS')
+API_KEY            = os.environ.get('BITBANK_API_KEY')
+API_SECRET         = os.environ.get('BITBANK_API_SECRET')
+GMAIL_ADDRESS      = os.environ.get('GMAIL_ADDRESS')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+PAIR               = 'btc_jpy'
 
+# ===================================================
+# 設定値
+# ===================================================
+STOP_LOSS_PCT  = 0.05  # 損切りライン: 買値から-5%で強制売却
+ORDER_RATIO    = 0.5   # 買い時: JPY残高の50%を使う
+MIN_ORDER_JPY  = 1000  # 最低注文金額
+POSITION_FILE  = 'position.json'
+
+# ===================================================
+# Gmail通知
+# ===================================================
 def send_notification(subject, body):
     try:
         msg = MIMEMultipart()
         msg['From']    = GMAIL_ADDRESS
         msg['To']      = GMAIL_ADDRESS
         msg['Subject'] = subject
-
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             server.send_message(msg)
         print(f"通知送信完了: {subject}")
     except Exception as e:
         print(f"通知送信失敗: {e}")
-warnings.filterwarnings('ignore')
-
-API_KEY    = os.environ.get('BITBANK_API_KEY')
-API_SECRET = os.environ.get('BITBANK_API_SECRET')
-PAIR       = 'btc_jpy'
-
-# ===================================================
-# 設定値
-# ===================================================
-STOP_LOSS_PCT   = 0.05   # 損切りライン: 買値から-5%で強制売却
-ORDER_RATIO     = 0.5    # 買い時: JPY残高の50%を使う
-MIN_ORDER_JPY   = 1000   # 最低注文金額
-POSITION_FILE   = 'position.json'
 
 # ===================================================
 # 指標計算(pandas-ta不使用)
@@ -223,12 +223,12 @@ def get_signal():
 # ===================================================
 # メイン処理
 # ===================================================
-now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+now   = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 today = datetime.now().strftime('%Y-%m-%d')
 print(f"実行時刻: {now}")
 print("=" * 50)
 
-# 現在の残高と価格を取得
+# 残高と価格を取得
 assets = get_assets()
 jpy_balance = 0
 btc_balance = 0
@@ -243,7 +243,7 @@ print(f"JPY残高       : {jpy_balance:,.0f}円")
 print(f"BTC残高       : {btc_balance:.6f} BTC")
 print(f"現在のBTC価格 : {btc_price:,.0f}円")
 
-# ポジション情報を読み込む
+# ポジション読み込み
 pos = load_position()
 print(f"現在のポジション: {pos['position']}")
 if pos['position'] == 'long':
@@ -265,6 +265,13 @@ if pos['position'] == 'long' and pos['entry_price'] > 0:
             print(f"損切り注文結果: {result}")
             if result.get('success') == 1:
                 save_position('none', 0, '', 0)
+                send_notification(
+                    '🔴 BTC損切り発動',
+                    f'損切りが発動しました。\n'
+                    f'売却価格: {btc_price:,.0f}円\n'
+                    f'損益: {pnl_pct*100:.2f}%\n'
+                    f'実行時刻: {now}'
+                )
         else:
             print("BTC残高なし、ポジションリセット")
             save_position('none', 0, '', 0)
@@ -278,12 +285,11 @@ proba = get_signal()
 print(f"上昇確率: {proba:.2%}")
 
 # ===================================================
-# 売買判断(ポジション管理あり)
+# 売買判断
 # ===================================================
 if proba >= 0.5:
     # 買いシグナル
     if pos['position'] == 'none':
-        # ポジションなし → 新規買い
         if jpy_balance >= MIN_ORDER_JPY:
             order_jpy  = jpy_balance * ORDER_RATIO
             btc_amount = round(order_jpy / btc_price, 4)
@@ -293,29 +299,41 @@ if proba >= 0.5:
                 print(f"注文結果: {result}")
                 if result.get('success') == 1:
                     save_position('long', btc_price, today, btc_amount)
+                    send_notification(
+                        '🟢 BTC買い注文完了',
+                        f'買い注文が成立しました。\n'
+                        f'購入価格: {btc_price:,.0f}円\n'
+                        f'購入数量: {btc_amount:.6f}BTC\n'
+                        f'購入金額: {order_jpy:,.0f}円\n'
+                        f'実行時刻: {now}'
+                    )
             else:
                 print(f"注文数量が最小値未満のためスキップ")
         else:
             print(f"残高不足のためスキップ({jpy_balance:.0f}円)")
     else:
-        # すでにロング保有中 → 何もしない
         print(f"買いシグナルだが、すでにロング保有中 → 追加購入しない")
 
 else:
     # 売りシグナル
     if pos['position'] == 'long':
-        # ロング保有中 → 決済
         if btc_balance >= 0.0001:
             print(f"売りシグナル(決済): BTC({btc_balance:.6f}BTC)を売却")
             result = place_order('sell', btc_balance)
             print(f"注文結果: {result}")
             if result.get('success') == 1:
                 save_position('none', 0, '', 0)
+                send_notification(
+                    '🔵 BTC売り注文完了',
+                    f'売り注文が成立しました。\n'
+                    f'売却価格: {btc_price:,.0f}円\n'
+                    f'売却数量: {btc_balance:.6f}BTC\n'
+                    f'実行時刻: {now}'
+                )
         else:
             print(f"BTC残高なし、ポジションリセット")
             save_position('none', 0, '', 0)
     else:
-        # ポジションなし → 何もしない
         print(f"売りシグナルだがポジションなし → 何もしない")
 
 print("=" * 50)
