@@ -20,8 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install yfinance pandas numpy lightgbm scikit-learn requests
-          pip install pandas-ta --no-build-isolation || pip install git+https://github.com/twopirllc/pandas-ta.git@development
-
+          
       - name: Run auto trade
         env:
           BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
