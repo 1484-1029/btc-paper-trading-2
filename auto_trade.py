@@ -1,5 +1,5 @@
 # ===================================================
-# BTC自動売買スクリプト(bitbank)
+# BTC自動売買スクリプト(bitbank) pandas-ta不使用版
 # ===================================================
 import os
 import time
@@ -10,7 +10,6 @@ import json
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 import lightgbm as lgb
 from datetime import datetime
 import warnings
@@ -19,6 +18,49 @@ warnings.filterwarnings('ignore')
 API_KEY    = os.environ.get('BITBANK_API_KEY')
 API_SECRET = os.environ.get('BITBANK_API_SECRET')
 PAIR       = 'btc_jpy'
+
+# ===================================================
+# 指標計算(pandas-taを使わず自前で実装)
+# ===================================================
+def calc_sma(series, window):
+    return series.rolling(window=window).mean()
+
+def calc_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def calc_macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast).mean()
+    ema_slow = series.ewm(span=slow).mean()
+    macd = ema_fast - ema_slow
+    signal_line = macd.ewm(span=signal).mean()
+    hist = macd - signal_line
+    return macd, signal_line, hist
+
+def calc_bbands(series, window=20):
+    sma = series.rolling(window=window).mean()
+    std = series.rolling(window=window).std()
+    upper = sma + 2 * std
+    lower = sma - 2 * std
+    return upper, lower
+
+def calc_atr(high, low, close, period=14):
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    return tr.rolling(window=period).mean()
+
+def calc_stoch(high, low, close, k=14, d=3):
+    low_k  = low.rolling(window=k).min()
+    high_k = high.rolling(window=k).max()
+    stoch_k = 100 * (close - low_k) / (high_k - low_k)
+    stoch_d = stoch_k.rolling(window=d).mean()
+    return stoch_k, stoch_d
 
 # ===================================================
 # bitbank API関連の関数
@@ -53,20 +95,15 @@ def get_btc_price():
     data = r.json()
     return float(data['data']['last'])
 
-def place_order(side, amount_jpy, price):
+def place_order(side, btc_amount):
     path = '/v1/user/spot/order'
     nonce = str(int(time.time() * 1000))
-
-    # 購入数量(BTC)を計算(小数点4桁まで)
-    btc_amount = round(amount_jpy / price, 4)
-
     body = json.dumps({
         'pair': PAIR,
-        'amount': str(btc_amount),
-        'side': side,        # 'buy' or 'sell'
-        'type': 'market',    # 成行注文
+        'amount': str(round(btc_amount, 4)),
+        'side': side,
+        'type': 'market',
     })
-
     r = requests.post(
         'https://api.bitbank.cc' + path,
         headers=get_headers(path, nonce, body),
@@ -82,21 +119,18 @@ def get_signal():
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    df['SMA5']  = ta.sma(df['Close'], length=5)
-    df['SMA20'] = ta.sma(df['Close'], length=20)
+    df['SMA5']  = calc_sma(df['Close'], 5)
+    df['SMA20'] = calc_sma(df['Close'], 20)
     df['SMA5_20_ratio'] = df['SMA5'] / df['SMA20']
-    df['RSI14'] = ta.rsi(df['Close'], length=14)
+    df['RSI14'] = calc_rsi(df['Close'], 14)
 
-    macd = ta.macd(df['Close'])
-    df['MACD']        = macd['MACD_12_26_9']
-    df['MACD_signal'] = macd['MACDs_12_26_9']
-    df['MACD_hist']   = macd['MACDh_12_26_9']
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = calc_macd(df['Close'])
 
-    bb = ta.bbands(df['Close'], length=20)
-    df['BB_width']    = (bb['BBU_20_2.0_2.0'] - bb['BBL_20_2.0_2.0']) / df['Close']
-    df['BB_position'] = (df['Close'] - bb['BBL_20_2.0_2.0']) / (bb['BBU_20_2.0_2.0'] - bb['BBL_20_2.0_2.0'])
+    bb_upper, bb_lower = calc_bbands(df['Close'], 20)
+    df['BB_width']    = (bb_upper - bb_lower) / df['Close']
+    df['BB_position'] = (df['Close'] - bb_lower) / (bb_upper - bb_lower)
 
-    df['ATR14'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
+    df['ATR14'] = calc_atr(df['High'], df['Low'], df['Close'], 14)
 
     for lag in [1, 2, 3, 5]:
         df[f'return_lag{lag}'] = df['Close'].pct_change(lag)
@@ -108,9 +142,7 @@ def get_signal():
     df['upper_shadow']  = (df['High'] - df[['Close','Open']].max(axis=1)) / df['Open']
     df['lower_shadow']  = (df[['Close','Open']].min(axis=1) - df['Low']) / df['Open']
 
-    stoch = ta.stoch(df['High'], df['Low'], df['Close'])
-    df['stoch_k'] = stoch['STOCHk_14_3_3']
-    df['stoch_d'] = stoch['STOCHd_14_3_3']
+    df['stoch_k'], df['stoch_d'] = calc_stoch(df['High'], df['Low'], df['Close'])
 
     df['volatility5']      = df['Close'].pct_change().rolling(5).std()
     df['volatility10']     = df['Close'].pct_change().rolling(10).std()
@@ -136,9 +168,8 @@ def get_signal():
     X = df[FEATURE_COLS]
     y = df['target']
 
-    # 直近データ以外で学習
-    X_train = X.iloc[:-3]
-    y_train = y.iloc[:-3]
+    X_train  = X.iloc[:-3]
+    y_train  = y.iloc[:-3]
     X_latest = X.iloc[[-1]]
 
     model = lgb.LGBMClassifier(
@@ -162,10 +193,9 @@ def get_signal():
 # ===================================================
 print(f"実行時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# 現在の残高を取得
 assets = get_assets()
-jpy_balance  = 0
-btc_balance  = 0
+jpy_balance = 0
+btc_balance = 0
 
 for asset in assets['data']['assets']:
     if asset['asset'] == 'jpy':
@@ -176,36 +206,28 @@ for asset in assets['data']['assets']:
 print(f"JPY残高: {jpy_balance:,.0f}円")
 print(f"BTC残高: {btc_balance:.6f} BTC")
 
-# 現在のBTC価格を取得
 btc_price = get_btc_price()
 print(f"現在のBTC価格: {btc_price:,.0f}円")
 
-# シグナルを取得
 print("シグナル計算中...")
 proba = get_signal()
 print(f"上昇確率: {proba:.2%}")
 
-# ===================================================
-# 売買判断
-# ===================================================
-MIN_ORDER_JPY = 1000  # 最低注文金額
+MIN_ORDER_JPY = 1000
 
 if proba >= 0.5:
-    # 買いシグナル
     if jpy_balance >= MIN_ORDER_JPY:
-        # JPY残高の50%だけ買う(リスク管理)
         order_jpy = jpy_balance * 0.5
-        print(f"買いシグナル: {order_jpy:,.0f}円分のBTCを購入")
-        result = place_order('buy', order_jpy, btc_price)
+        btc_amount = order_jpy / btc_price
+        print(f"買いシグナル: {order_jpy:,.0f}円分({btc_amount:.6f}BTC)を購入")
+        result = place_order('buy', btc_amount)
         print(f"注文結果: {result}")
     else:
         print(f"買いシグナルだが残高不足({jpy_balance:.0f}円)")
 else:
-    # 売りシグナル(BTCを持っていれば売る)
     if btc_balance * btc_price >= MIN_ORDER_JPY:
         print(f"売りシグナル: BTC全量({btc_balance:.6f}BTC)を売却")
-        sell_amount = btc_balance
-        result = place_order('sell', sell_amount * btc_price, btc_price)
+        result = place_order('sell', btc_balance)
         print(f"注文結果: {result}")
     else:
         print(f"売りシグナルだがBTC残高なし")
