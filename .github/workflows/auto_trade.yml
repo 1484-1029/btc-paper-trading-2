@@ -1,29 +1,108 @@
-name: BTC Auto Trade
+# ===================================================
+# BTC自動売買スクリプト(bitbank) pandas-ta不使用版
+# ===================================================
+import os
+import time
+import hmac
+import hashlib
+import requests
+import json
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import lightgbm as lgb
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
-on:
-  schedule:
-    - cron: '0 9 * * *'
-  workflow_dispatch:
+API_KEY    = os.environ.get('BITBANK_API_KEY')
+API_SECRET = os.environ.get('BITBANK_API_SECRET')
+PAIR       = 'btc_jpy'
 
-jobs:
-  trade:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+# ===================================================
+# 指標計算(pandas-taを使わず自前で実装)
+# ===================================================
+def calc_sma(series, window):
+    return series.rolling(window=window).mean()
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+def calc_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
-      - name: Install dependencies
-        run: |
-          pip install yfinance pandas numpy lightgbm scikit-learn requests
-          pip install pandas-ta --no-build-isolation || pip install git+https://github.com/twopirllc/pandas-ta.git@development
+def calc_macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast).mean()
+    ema_slow = series.ewm(span=slow).mean()
+    macd = ema_fast - ema_slow
+    signal_line = macd.ewm(span=signal).mean()
+    hist = macd - signal_line
+    return macd, signal_line, hist
 
-      - name: Run auto trade
-        env:
-          BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
-          BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
-        run: python auto_trade.py
+def calc_bbands(series, window=20):
+    sma = series.rolling(window=window).mean()
+    std = series.rolling(window=window).std()
+    upper = sma + 2 * std
+    lower = sma - 2 * std
+    return upper, lower
+
+def calc_atr(high, low, close, period=14):
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    return tr.rolling(window=period).mean()
+
+def calc_stoch(high, low, close, k=14, d=3):
+    low_k  = low.rolling(window=k).min()
+    high_k = high.rolling(window=k).max()
+    stoch_k = 100 * (close - low_k) / (high_k - low_k)
+    stoch_d = stoch_k.rolling(window=d).mean()
+    return stoch_k, stoch_d
+
+# ===================================================
+# bitbank API関連の関数
+# ===================================================
+def make_signature(path, nonce, body=''):
+    message = nonce + path + body
+    return hmac.new(
+        API_SECRET.encode('utf-8'),
+        message.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+def get_headers(path, nonce, body=''):
+    return {
+        'ACCESS-KEY': API_KEY,
+        'ACCESS-NONCE': nonce,
+        'ACCESS-SIGNATURE': make_signature(path, nonce, body),
+        'Content-Type': 'application/json'
+    }
+
+def get_assets():
+    path = '/v1/user/assets'
+    nonce = str(int(time.time() * 1000))
+    r = requests.get(
+        'https://api.bitbank.cc' + path,
+        headers=get_headers(path, nonce)
+    )
+    return r.json()
+
+def get_btc_price():
+    r = requests.get('https://public.bitbank.cc/btc_jpy/ticker')
+    data = r.json()
+    return float(data['data']['last'])
+
+def place_order(side, btc_amount):
+    path = '/v1/user/spot/order'
+    nonce = str(int(time.time() * 1000))
+    body = json.dumps({
+        'pair': PAIR,
+        'amount': str(round(btc_amount, 4)),
+        'side': side,
+        'type': 'market',
+    })
+    r = requests.post(
+        'https://api.bitbank.cc' + path,
