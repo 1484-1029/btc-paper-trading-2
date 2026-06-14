@@ -66,7 +66,12 @@ def calc_stoch(high, low, close, k=14, d=3):
 # bitbank API関連の関数
 # ===================================================
 def make_signature(path, nonce, body=''):
-    message = nonce + path + body
+    # GETの場合: nonce + path
+    # POSTの場合: nonce + body(JSON文字列)
+    if body:
+        message = nonce + body
+    else:
+        message = nonce + path
     return hmac.new(
         API_SECRET.encode('utf-8'),
         message.encode('utf-8'),
