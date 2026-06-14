@@ -14,6 +14,28 @@ import numpy as np
 import lightgbm as lgb
 from datetime import datetime
 import warnings
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+GMAIL_ADDRESS     = os.environ.get('GMAIL_ADDRESS')
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+
+def send_notification(subject, body):
+    try:
+        msg = MIMEMultipart()
+        msg['From']    = GMAIL_ADDRESS
+        msg['To']      = GMAIL_ADDRESS
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.send_message(msg)
+        print(f"通知送信完了: {subject}")
+    except Exception as e:
+        print(f"通知送信失敗: {e}")
 warnings.filterwarnings('ignore')
 
 API_KEY    = os.environ.get('BITBANK_API_KEY')
