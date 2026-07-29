@@ -1,6 +1,6 @@
 {
-  "position": "long",
-  "entry_price": 10741513.0,
-  "entry_date": "2026-07-23",
-  "amount_btc": 0.0005
+  "position": "none",
+  "entry_price": 0,
+  "entry_date": "",
+  "amount_btc": 0
 }
